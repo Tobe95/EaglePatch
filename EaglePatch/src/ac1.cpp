@@ -37,8 +37,22 @@ struct sAddresses
 	static uintptr_t _ps3_controls[4];
 	static uintptr_t _ps3_controls_analog[4];
 	static uintptr_t _skipIntroVideos;
-	static uintptr_t _shadowMapSize;
-	static uintptr_t _maxNumNPCs;
+	static uintptr_t _shadowMapSize1;
+	static uintptr_t _shadowMapSize2;
+	static uintptr_t _shadowMapSize3;
+	static uintptr_t _shadowMapSize4;
+	static uintptr_t _maxNumNPCs_high1;
+	static uintptr_t _maxNumNPCs_high2;
+	static uintptr_t _maxNumNPCs_low1;
+	static uintptr_t _maxNumNPCs_low2;
+	static uintptr_t _increaseFOV;
+	static uintptr_t _increaseFOV_JumpOut;
+	static uintptr_t _smallObjectsCullDistanceModifier;
+	static uintptr_t _smallObjectsCullDistanceModifier2;
+	static uintptr_t _smallObjectsCullDistanceModifier_JumpOut;
+	static uintptr_t _mediumObjectsCullDistanceModifier;
+	static uintptr_t _mediumObjectsCullDistanceModifier2;
+	static uintptr_t _mediumObjectsCullDistanceModifier_JumpOut;
 };
 
 uintptr_t sAddresses::Pad_UpdateTimeStamps = 0;
@@ -55,9 +69,22 @@ uint32_t* sAddresses::_descriptor_var = 0;
 uintptr_t sAddresses::_ps3_controls[4];
 uintptr_t sAddresses::_ps3_controls_analog[4];
 uintptr_t sAddresses::_skipIntroVideos = 0;
-uintptr_t sAddresses::_shadowMapSize = 0;
-uintptr_t sAddresses::_maxNumNPCs = 0;
-
+uintptr_t sAddresses::_shadowMapSize1 = 0;
+uintptr_t sAddresses::_shadowMapSize2 = 0;
+uintptr_t sAddresses::_shadowMapSize3 = 0;
+uintptr_t sAddresses::_shadowMapSize4 = 0;
+uintptr_t sAddresses::_maxNumNPCs_high1 = 0;
+uintptr_t sAddresses::_maxNumNPCs_high2 = 0;
+uintptr_t sAddresses::_maxNumNPCs_low1 = 0;
+uintptr_t sAddresses::_maxNumNPCs_low2 = 0;
+uintptr_t sAddresses::_increaseFOV = 0;
+uintptr_t sAddresses::_increaseFOV_JumpOut = 0;
+uintptr_t sAddresses::_smallObjectsCullDistanceModifier = 0;
+uintptr_t sAddresses::_smallObjectsCullDistanceModifier2 = 0;
+uintptr_t sAddresses::_smallObjectsCullDistanceModifier_JumpOut = 0;
+uintptr_t sAddresses::_mediumObjectsCullDistanceModifier = 0;
+uintptr_t sAddresses::_mediumObjectsCullDistanceModifier2 = 0;
+uintptr_t sAddresses::_mediumObjectsCullDistanceModifier_JumpOut = 0;
 
 auto ac_getNewDescriptor = (void* (__cdecl*)(uint32_t, uint32_t, uint32_t))0;
 auto ac_allocate = (void*(__cdecl*)(int, uint32_t, void*, const void*, const char*, const char*, uint32_t, const char*))0;
@@ -65,7 +92,6 @@ auto ac_delete = (void (__cdecl*)(void*, void*, const char*))0;
 
 static int NEEDED_KEYBOARD_SET = 0;
 static int DESIRED_SHADOWMAP_SIZE = 0;
-static int DESIRED_NPC_AMOUNT = 0;
 
 namespace scimitar
 {
@@ -298,6 +324,34 @@ ASM(_addXenonJoy_Patch)
 	VARJMP(sAddresses::_addXenonJoy_JumpOut)
 }
 
+ASM(_FOV_Patch)
+{
+	__asm
+	{
+		mov dword ptr [esi + 0xA0], 0x3F800000 //,(float)1 // FOV default=0.8
+		movss xmm1,dword ptr [esi + 0xA0]
+		jmp sAddresses::_increaseFOV_JumpOut
+	}
+}
+
+ASM(_smallObjectsCullDistanceModifier_Patch)
+{
+	__asm
+	{
+		mov dword ptr [edi + 0x44], 0x00
+		jmp sAddresses::_smallObjectsCullDistanceModifier_JumpOut
+	}
+}
+
+ASM(_mediumObjectsCullDistanceModifier_Patch)
+{
+	__asm
+	{
+		mov dword ptr [edi + 0x48], 0x00
+		jmp sAddresses::_mediumObjectsCullDistanceModifier_JumpOut
+	}
+}
+
 struct D3D10ResolutionContainer
 {
 	IDXGIOutput* DXGIOutput;
@@ -382,14 +436,39 @@ void patch()
 	if (get_private_profile_bool("SkipIntroVideos", FALSE))
 		PatchByte(sAddresses::_skipIntroVideos, 0xEB);
 
-	// 0x400 is just random, it doesn't scale that high. 0x00 completely disables roaming NPCs
-	DESIRED_NPC_AMOUNT = get_private_profile_int("NPC_Amount", 1);
-	if (DESIRED_NPC_AMOUNT < 1)
-		PatchByte(sAddresses::_maxNumNPCs, 0x00);
-	if (DESIRED_NPC_AMOUNT > 1)
-		PatchBytes(sAddresses::_maxNumNPCs, (unsigned char*)"\x00\x04", 2);
+	if (get_private_profile_bool("OverwriteCrowdDensity", FALSE))
+	{
+		// 0x400 is just random, it doesn't scale that high
+		PatchBytes(sAddresses::_maxNumNPCs_high1, (unsigned char*)"\x00\x04", 2);
+		PatchBytes(sAddresses::_maxNumNPCs_high2, (unsigned char*)"\x00\x04", 2);
+		PatchByte(sAddresses::_maxNumNPCs_low1, 0x00);
+		PatchByte(sAddresses::_maxNumNPCs_low2, 0x00);
+	}
 
+	if (get_private_profile_bool("IncreaseFOV", FALSE))
+	InjectHook(sAddresses::_increaseFOV, _FOV_Patch, HOOK_JUMP);
 
+	if (get_private_profile_bool("ImproveDrawDistance", TRUE))
+	{
+		// This slightly improves draw distance of smaller objects such as boxes and stuff on highest detail setting. 
+		// The same can be achieved by changing the respective culldistancemodifier in Assassin.ini from "1" to "0" and setting file permissions to read-only.
+		BYTE smallObjectsCullDistance[] = {
+			0xC7, 0x44, 0x20, 0x44, 0x00, 0x00, 0x00, 0x00, // mov dword ptr [EAX + 0x44],0x0
+			0x90, 0x90, 0x90, 0x90, 0x90 // nop; nop; nop; nop; nop
+		};
+		PatchBytes(sAddresses::_smallObjectsCullDistanceModifier, smallObjectsCullDistance);
+		
+		BYTE mediumObjectsCullDistance[] = {
+	        0xC7, 0x44, 0x20, 0x48, 0x00, 0x00, 0x00, 0x00, // mov dword ptr [EAX + 0x48],0x0
+			0x8B, 0xCD, // mov exc, ebp
+			0x90, 0x90, 0x90, 0x90, 0x90 // nop; nop; nop; nop; nop
+		};
+		PatchBytes(sAddresses::_mediumObjectsCullDistanceModifier, mediumObjectsCullDistance);
+
+		InjectHook(sAddresses::_smallObjectsCullDistanceModifier2, _smallObjectsCullDistanceModifier_Patch, HOOK_JUMP);
+		InjectHook(sAddresses::_mediumObjectsCullDistanceModifier2, _mediumObjectsCullDistanceModifier_Patch, HOOK_JUMP);
+
+	}
 }
 
 void InitAddresses(eExeVersion exeVersion)
@@ -426,17 +505,41 @@ void InitAddresses(eExeVersion exeVersion)
 		sAddresses::_ps3_controls_analog[2] = 0x98D07B + 4;
 		sAddresses::_ps3_controls_analog[3] = 0x98D092 + 4;
 		sAddresses::_skipIntroVideos = 0x405495;
-		sAddresses::_shadowMapSize = 0x9D97C3;
-		sAddresses::_maxNumNPCs = 0x546D1F;
+		sAddresses::_shadowMapSize1 = 0x9D97C3;
+		sAddresses::_shadowMapSize2 = 0xE7F281;
+		sAddresses::_shadowMapSize3 = 0xE911FA;
+		sAddresses::_shadowMapSize4 = 0xE7EC4C;
+		sAddresses::_maxNumNPCs_high1 = 0x546D1F;
+		sAddresses::_maxNumNPCs_high2 = 0xE7F4E0;
+		sAddresses::_maxNumNPCs_low1 = 0xE7F491;
+		sAddresses::_maxNumNPCs_low2 = 0xE7E3FF;
+		sAddresses::_increaseFOV = 0x4BFC45;
+		sAddresses::_increaseFOV_JumpOut = 0x4BFC4D;
+		sAddresses::_smallObjectsCullDistanceModifier = 0xE7F415;
+		sAddresses::_smallObjectsCullDistanceModifier2 = 0x9D990B;
+		sAddresses::_smallObjectsCullDistanceModifier_JumpOut = 0x9D9910;
+		sAddresses::_mediumObjectsCullDistanceModifier = 0xE7F427;
+		sAddresses::_mediumObjectsCullDistanceModifier2 = 0x9D9934;
+		sAddresses::_mediumObjectsCullDistanceModifier_JumpOut = 0x9D9939;
 
 		// While doing the same for DX10 at 0x7BB443 technically improves shadowmaps, it completely breakes cascade/shadow distances
 		DESIRED_SHADOWMAP_SIZE = get_private_profile_int("D3D9_ImproveShadowMapResolution", 1);
 		if (DESIRED_SHADOWMAP_SIZE > 0)
 		{
 			if (DESIRED_SHADOWMAP_SIZE < 2)
-				PatchByte(sAddresses::_shadowMapSize, 0x08);
+			{
+				PatchByte(sAddresses::_shadowMapSize1, 0x08);
+				PatchByte(sAddresses::_shadowMapSize2, 0x08);
+				PatchByte(sAddresses::_shadowMapSize3, 0x08);
+				PatchByte(sAddresses::_shadowMapSize4, 0x08);
+			}
 			else
-				PatchByte(sAddresses::_shadowMapSize, 0x10);
+			{
+				PatchByte(sAddresses::_shadowMapSize1, 0x10);
+				PatchByte(sAddresses::_shadowMapSize2, 0x10);
+				PatchByte(sAddresses::_shadowMapSize3, 0x10);
+				PatchByte(sAddresses::_shadowMapSize4, 0x10);
+			}
 		}
 
 		// This is the Wide Screen Fix from WSGF, there's probably a more elegant way to implement this
@@ -484,7 +587,18 @@ void InitAddresses(eExeVersion exeVersion)
 		sAddresses::_ps3_controls_analog[2] = 0x96D88B + 4;
 		sAddresses::_ps3_controls_analog[3] = 0x96D8A2 + 4;
 		sAddresses::_skipIntroVideos = 0x4054B5;
-		sAddresses::_maxNumNPCs = 0x584C6F;
+		sAddresses::_maxNumNPCs_high1 = 0x584C6F;
+		sAddresses::_maxNumNPCs_high2 = 0x1052320;
+		sAddresses::_maxNumNPCs_low1 = 0x10522D1;
+		sAddresses::_maxNumNPCs_low2 = 0x105123F;
+		sAddresses::_increaseFOV = 0x5001A5;
+		sAddresses::_increaseFOV_JumpOut = 0x5001AD;
+		sAddresses::_smallObjectsCullDistanceModifier = 0x1052255;
+		sAddresses::_smallObjectsCullDistanceModifier2 = 0x7BB58B;
+		sAddresses::_smallObjectsCullDistanceModifier_JumpOut = 0x7BB590;
+		sAddresses::_mediumObjectsCullDistanceModifier = 0x1052267;
+		sAddresses::_mediumObjectsCullDistanceModifier2 = 0x7BB5B4;
+		sAddresses::_mediumObjectsCullDistanceModifier_JumpOut = 0x7BB5B9;
 
 		if (get_private_profile_bool("D3D10_RemoveDuplicateResolutions", TRUE))
 		{
